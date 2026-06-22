@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>LLP南港週邊道路監控 NVR Ver1.0</title>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+<style>
+html, body {
+  margin:0;
+  height:100%;
+  background:#000;
+  font-family:system-ui;
+}
+
+/* 🖥️ 電腦監控牆 */
+.grid{
+  height:100vh;
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(33.33%,1fr));
+  grid-auto-rows:1fr;
+}
+
+.tile{
+  position:relative;
+  overflow:hidden;
+  cursor:pointer;
+}
+
+iframe,
+video{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  border:none;
+}
+
+video{
+  object-fit:cover;
+  background:#000;
+}
+
+/* CAM 標籤 */
+.label{
+  position:absolute;
+  top:8px;
+  left:8px;
+  z-index:2;
+
+  background:rgba(0,0,0,.55);
+  padding:6px 10px;
+  border-radius:8px;
+  font-size:12px;
+  color:#4ade80;
+  backdrop-filter:blur(4px);
+}
+
+/* 🕒 小畫面時間 */
+.time{
+  position:absolute;
+  bottom:8px;
+  right:8px;
+  z-index:2;
+
+  background:rgba(0,0,0,.6);
+  padding:4px 8px;
+  border-radius:6px;
+  font-size:12px;
+  color:#fff;
+  font-family:monospace;
+}
+
+/* 🔴 主畫面 */
+#mainView{
+  position:fixed;
+  inset:0;
+  background:#000;
+  z-index:999;
+  display:none;
+}
+
+/* 主畫面 iframe */
+#mainFrame,
+#mainVideo{
+  width:100%;
+  height:100%;
+}
+
+#mainVideo{
+  display:none;
+  object-fit:contain;
+  background:#000;
+}
+
+/* 🔴 主畫面時間 */
+.mainTime{
+  position:fixed;
+  bottom:20px;
+  right:20px;
+  z-index:1001;
+
+  background:rgba(0,0,0,.65);
+  padding:6px 10px;
+  border-radius:8px;
+  font-size:14px;
+  color:#fff;
+  font-family:monospace;
+}
+
+/* 左上控制 */
+.topLeft{
+  position:fixed;
+  top:10px;
+  left:10px;
+  z-index:1000;
+  display:none;
+  gap:10px;
+  align-items:center;
+}
+
+.backBtn{
+  background:rgba(0,0,0,.6);
+  border:1px solid #4ade80;
+  color:#4ade80;
+  padding:6px 10px;
+  border-radius:8px;
+  cursor:pointer;
+}
+
+.hint{
+  color:#aaa;
+  font-size:12px;
+}
+
+/* 📱 手機修正（只修變扁問題） */
+@media(max-width:768px){
+  .grid{
+    height:auto;
+    grid-template-columns:1fr;
+    grid-auto-rows:auto;
+    gap:8px;
+    padding:8px;
+  }
+
+  .tile{
+    width:100%;
+    aspect-ratio:16/9;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<div class="grid" id="grid"></div>
+
+<div id="mainView">
+
+  <div class="time mainTime" id="mainTime">--:--:--</div>
+  <iframe id="mainFrame"></iframe>
+
+  <video
+    id="mainVideo"
+    controls
+    autoplay
+    muted
+    playsinline>
+  </video>
+
+</div>
+
+<div class="topLeft" id="topLeft">
+  <button class="backBtn" onclick="closeMain()">← 返回監控牆 (ESC)</button>
+  <div class="hint" id="camName"></div>
+</div>
+
+<script>
+
+const cams = [
+{ name:"CAM-01 LLP南港 經貿二路131號 南向北", url:"https://jtmctrafficcctv3.gov.taipei/NVR/b8b8b099-6cfd-4f90-aa7c-c437ccc907a7/live.m3u8"},
+{ name:"CAM-02 經貿二路157巷 北向南", url:"https://jtmctrafficcctv4.gov.taipei/NVR/af48288e-7bd9-4cc4-a509-877eb442054c/live.m3u8"},
+{ name:"CAM-03 台肥大樓 經貿一路170號 西向東", url:"https://jtmctrafficcctv3.gov.taipei/NVR/eed17747-b296-4a36-85f8-a86d33a9eb5a/live.m3u8"},
+{ name:"CAM-04 經貿二路105巷口 西向東", url:"https://jtmctrafficcctv4.gov.taipei/NVR/cbad9d94-e07f-4566-ad7d-283940754cff/live.m3u8"},
+{ name:"CAM-05 南湖大橋三重路 南向北", url:"https://jtmctrafficcctv5.gov.taipei/NVR/d8c2b651-a098-474d-8f8f-1199953fb79b/live.m3u8"},
+{ name:"CAM-06 經貿二南港 北向南", url:"https://jtmctrafficcctv3.gov.taipei/NVR/7d284758-93eb-4a43-b41b-bfc978e22854/live.m3u8"},
+{ name:"CAM-07 南港路經貿一路 西向東", url:"https://jtmctrafficcctv4.gov.taipei/NVR/71e2a2e2-b100-40a7-aeac-13f4c515689d/live.m3u8"},
+{ name:"CAM-08 三重南港 西向東", url:"https://jtmctrafficcctv3.gov.taipei/NVR/8ab28f28-4ad8-4796-a442-bac261a6693d/live.m3u8"},
+{ name:"CAM-09 忠孝東研究院路 南向北", url:"https://jtmctrafficcctv4.gov.taipei/NVR/f2d9202e-6c9f-4094-a34c-92e4857da8cc/live.m3u8"}
+];
+
+const grid = document.getElementById("grid");
+let currentIndex = -1;
+
+/* 建立監控牆 */
+cams.forEach((c,i)=>{
+
+  const tile = document.createElement("div");
+  tile.className = "tile";
+
+  if(c.url.endsWith(".m3u8")){
+
+    tile.innerHTML = `
+      <div class="label">${c.name}</div>
+      <div class="time" id="time${i}">--:--:--</div>
+      <video
+        id="video${i}"
+        muted
+        autoplay
+        playsinline>
+      </video>
+    `;
+
+  }else{
+
+    tile.innerHTML = `
+      <div class="label">${c.name}</div>
+      <div class="time" id="time${i}">--:--:--</div>
+      <iframe src="${c.url}"></iframe>
+    `;
+  }
+
+/* 點擊放大控制 */
+const label = tile.querySelector('.label');
+const time = tile.querySelector('.time');
+
+label.onclick = ()=>openMain(i);
+time.onclick = ()=>openMain(i);
+
+  grid.appendChild(tile);
+
+  if(c.url.endsWith(".m3u8")){
+
+    const video = document.getElementById(`video${i}`);
+
+    if(Hls.isSupported()){
+
+      const hls = new Hls();
+
+      hls.loadSource(c.url);
+
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED,()=>{
+        video.play();
+      });
+
+    }else if(video.canPlayType('application/vnd.apple.mpegurl')){
+
+      video.src = c.url;
+      video.play();
+
+    }
+  }
+
+});
+
+/* 🕒 GMT+8 時間更新 */
+function updateTime(){
+
+  const now = new Date();
+
+  const options = {
+    timeZone:"Asia/Taipei",
+    year:"numeric",
+    month:"2-digit",
+    day:"2-digit",
+    hour:"2-digit",
+    minute:"2-digit",
+    second:"2-digit",
+    hour12:false
+  };
+
+  const timeStr =  new Intl.DateTimeFormat("zh-TW",options).format(now);
+
+  // 🟢 小畫面
+  cams.forEach((_,i)=>{
+    const el = document.getElementById("time"+i);
+    if(el) el.innerText = timeStr;
+  });
+
+  // 🔴 主畫面
+  const mainTime = document.getElementById("mainTime");
+  if(mainTime) mainTime.innerText = timeStr;
+}
+
+setInterval(updateTime,1000);
+updateTime();
+
+/* 主畫面 */
+function openMain(i){
+  currentIndex = i;
+
+  document.getElementById("mainView").style.display = "block";
+
+  const frame =
+    document.getElementById("mainFrame");
+
+  const video =
+    document.getElementById("mainVideo");
+
+  if(cams[i].url.endsWith(".m3u8")){
+
+    frame.style.display = "none";
+    video.style.display = "block";
+
+    if(Hls.isSupported()){
+
+      const hls = new Hls();
+
+      hls.loadSource(cams[i].url);
+
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED,()=>{
+        video.play();
+      });
+
+    }else{
+
+      video.src = cams[i].url;
+      video.play();
+
+    }
+
+  }else{
+
+    video.style.display = "none";
+    frame.style.display = "block";
+
+    frame.src = cams[i].url;
+
+  }
+
+  document.getElementById("topLeft").style.display =
+    "flex";
+
+  document.getElementById("camName").innerText =
+    cams[i].name;
+}
+
+/* 關閉主畫面 */
+function closeMain(){
+
+  document.getElementById("mainView").style.display = "none";
+  document.getElementById("mainFrame").src = "";
+
+  document.getElementById("mainVideo").pause();
+  document.getElementById("topLeft").style.display =  "none";
+}
+
+/* 🧠 只在桌機啟用鍵盤 */
+const isTouchDevice =
+  ("ontouchstart" in window) ||
+  navigator.maxTouchPoints > 0;
+
+if (!isTouchDevice) {
+window.addEventListener("keydown",(e)=>{
+
+  if(e.key==="Escape") closeMain();
+
+const num = parseInt(e.key);
+    if (num >= 1 && num <= cams.length) {
+      openMain(num - 1);
+  }
+
+  });
+
+}
+
+</script>
+
+</body>
+</html>
